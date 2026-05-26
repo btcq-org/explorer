@@ -15,6 +15,7 @@ export type QbtcRequestMethod =
   | 'request_accounts'
   | 'get_accounts'
   | 'send_transaction'
+  | 'sign_and_broadcast'
   | 'get_transaction_by_hash';
 
 export interface QbtcProvider {
@@ -25,6 +26,17 @@ export interface QbtcSendTxParams {
   from: string;
   to: string;
   value: string;
+  memo?: string;
+}
+
+export interface QbtcCosmosMessage {
+  typeUrl: string;
+  value: Record<string, any>;
+}
+
+export interface QbtcSignAndBroadcastParams {
+  from: string;
+  messages: QbtcCosmosMessage[];
   memo?: string;
 }
 
@@ -81,6 +93,22 @@ export async function sendQbtcTransaction(params: QbtcSendTxParams): Promise<str
     throw new Error('Vultisig QBTC provider not available');
   }
   return provider.request({ method: 'send_transaction', params: [params] });
+}
+
+/**
+ * Generic message signer. Use this for anything beyond a bank send:
+ * `MsgVote`, `MsgDelegate`, `MsgWithdrawDelegatorReward`, `MsgDeposit`, etc.
+ * Vultisig pops its approval UI, signs the tx with ML-DSA-44, broadcasts,
+ * and resolves with the tx hash.
+ */
+export async function signAndBroadcastQbtc(
+  params: QbtcSignAndBroadcastParams,
+): Promise<string> {
+  const provider = getQbtcProvider();
+  if (!provider) {
+    throw new Error('Vultisig QBTC provider not available');
+  }
+  return provider.request({ method: 'sign_and_broadcast', params: [params] });
 }
 
 export function describeQbtcError(err: unknown): string {

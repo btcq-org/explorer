@@ -5,35 +5,41 @@
  * The CDN widget's signer factory only knows Kepler / Leap / Metamask /
  * Ledger; calling Send with a QBTC wallet trips its `"No wallet connected"`
  * branch. QBTC also signs with ML-DSA-44, which Keplr's offline signer can't
- * produce. So we render a daisyUI modal here and route Send/Transfer straight
- * to `window.vultisig.qbtc.request({ method: 'send_transaction', ... })`.
+ * produce. So we render a daisyUI modal here and route Send/Transfer to
+ * `window.vultisig.qbtc.request({ method: 'send_transaction', ... })` and
+ * Vote (plus future Delegate / Withdraw / Deposit) to the provider's
+ * generic `sign_and_broadcast` method.
  *
- * Reuses the existing `<label for="send">` and `<label for="transfer">` open
- * triggers by mounting hidden `<input id="send|transfer" type="checkbox">`
- * toggles with the daisyUI modal-toggle pattern. All QBTC divergence stays
- * inside this file so shared upstream pages don't need to change.
+ * Reuses the existing `<label for="send|transfer|vote">` open triggers by
+ * mounting hidden `<input id="send|transfer|vote" type="checkbox">` toggles
+ * with the daisyUI modal-toggle pattern. All QBTC divergence stays inside
+ * this file so shared upstream pages don't need to change.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { fromBech32 } from '@cosmjs/encoding';
-import { useBlockchain, useWalletStore } from '@/stores';
+import { useBlockchain, useTxDialog, useWalletStore } from '@/stores';
 import {
   describeQbtcError,
   isQbtcProviderAvailable,
   sendQbtcTransaction,
+  signAndBroadcastQbtc,
 } from '@/libs/vultisig-qbtc';
 import router from '@/router';
 
-type ModalMode = 'send' | 'transfer';
+type ModalMode = 'send' | 'transfer' | 'vote';
 
 const walletStore = useWalletStore();
 const chainStore = useBlockchain();
+const dialogStore = useTxDialog();
 
-// Both buttons go through the same provider call today — `window.vultisig.qbtc`
-// only exposes `send_transaction`. Keeping the modal definitions in one array
-// means adding Delegate / Withdraw later is just another entry.
+// Send/Transfer go through `window.vultisig.qbtc`'s `send_transaction` (bank
+// only). Vote is wired up to the same upstream `dialog.open('vote', …)` entry
+// point but will fail at submit until the Vultisig provider exposes a generic
+// message signer — see onSubmit() for the stub branch.
 const modes: ReadonlyArray<{ id: ModalMode; title: string; submitting: string }> = [
   { id: 'send', title: 'Send', submitting: 'Sending…' },
   { id: 'transfer', title: 'Transfer', submitting: 'Transferring…' },
+  { id: 'vote', title: 'Vote', submitting: 'Voting…' },
 ];
 
 const mode = ref<ModalMode>('send');
@@ -44,6 +50,24 @@ const showAdvanced = ref(false);
 const submitting = ref(false);
 const errorMsg = ref('');
 const txHash = ref('');
+
+// Vote-specific state. Upstream encodes option as the gov.v1 enum int:
+// 1=Yes, 2=Abstain, 3=No, 4=NoWithVeto.
+const voteOption = ref<'1' | '2' | '3' | '4'>('1');
+
+// Read proposal_id lazily from the dialog store. We can't capture it inside
+// onToggleChange: the label's native checkbox toggle fires `change` before
+// Vue runs the sibling `@click="dialog.open('vote', { proposal_id })"`, so
+// the store is still stale at that moment. A computed re-reads on every
+// access, so submit always sees the latest value.
+const proposalId = computed(() => {
+  try {
+    const parsed = JSON.parse(dialogStore.params || '{}');
+    return parsed.proposal_id != null ? String(parsed.proposal_id) : '';
+  } catch {
+    return '';
+  }
+});
 
 const QBTC_DECIMALS = 8;
 const QBTC_BASE = 10n ** BigInt(QBTC_DECIMALS);
@@ -103,6 +127,7 @@ function resetForm() {
   errorMsg.value = '';
   txHash.value = '';
   submitting.value = false;
+  voteOption.value = '1';
 }
 
 // Reset every time a modal flips to open. Watching the store's `type`
@@ -111,7 +136,7 @@ function resetForm() {
 function onToggleChange(e: Event) {
   const t = e.target as HTMLInputElement | null;
   if (!t || !t.checked) return;
-  if (t.id === 'send' || t.id === 'transfer') {
+  if (t.id === 'send' || t.id === 'transfer' || t.id === 'vote') {
     mode.value = t.id;
     resetForm();
   }
@@ -130,6 +155,38 @@ async function onSubmit() {
     errorMsg.value = 'Vultisig QBTC provider not available.';
     return;
   }
+
+  if (mode.value === 'vote') {
+    if (!proposalId.value) {
+      errorMsg.value = 'Proposal id is empty.';
+      return;
+    }
+    submitting.value = true;
+    try {
+      const hash: string = await signAndBroadcastQbtc({
+        from,
+        messages: [
+          {
+            typeUrl: '/cosmos.gov.v1.MsgVote',
+            value: {
+              voter: from,
+              proposalId: proposalId.value,
+              option: Number(voteOption.value),
+            },
+          },
+        ],
+        memo: memo.value.trim() || undefined,
+      });
+      txHash.value = hash;
+      confirmedEvent({ hash });
+    } catch (e) {
+      errorMsg.value = describeQbtcError(e);
+    } finally {
+      submitting.value = false;
+    }
+    return;
+  }
+
   const to = recipient.value.trim();
   if (!isValidQbtcAddress(to)) {
     errorMsg.value = 'Recipient must be a valid qbtc1… address.';
@@ -198,50 +255,114 @@ function viewTx() {
               />
             </div>
 
-            <div class="form-control">
-              <label class="label"><span class="label-text">Balances</span></label>
-              <input
-                type="text"
-                class="input input-bordered bg-base-200 w-full"
-                :value="balanceLabel"
-                readonly
-              />
-            </div>
-
-            <div class="form-control">
-              <label class="label"
-                ><span class="label-text">Recipient</span></label
-              >
-              <input
-                v-model="recipient"
-                type="text"
-                placeholder="qbtc1…"
-                class="input input-bordered bg-base-200 w-full"
-                :disabled="submitting"
-              />
-            </div>
-
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text">Amount</span>
-              </label>
-              <label
-                class="input input-bordered bg-base-200 w-full flex items-center gap-2"
-              >
+            <template v-if="m.id === 'vote'">
+              <div class="form-control">
+                <label class="label"
+                  ><span class="label-text">Proposal</span></label
+                >
                 <input
-                  v-model="amountInput"
                   type="text"
-                  inputmode="decimal"
-                  placeholder="0.0"
-                  class="grow bg-transparent outline-none border-0 p-0"
+                  class="input input-bordered bg-base-200 w-full"
+                  :value="proposalId ? `#${proposalId}` : ''"
+                  readonly
+                />
+              </div>
+
+              <div class="form-control">
+                <label class="label"><span class="label-text">Option</span></label>
+                <div class="qbtc-vote-options flex flex-wrap items-center gap-3">
+                  <label class="cursor-pointer inline-flex items-center gap-2">
+                    <input
+                      v-model="voteOption"
+                      type="radio"
+                      value="1"
+                      class="radio radio-sm radio-success"
+                      :disabled="submitting"
+                    />
+                    <span class="label-text">Yes</span>
+                  </label>
+                  <label class="cursor-pointer inline-flex items-center gap-2">
+                    <input
+                      v-model="voteOption"
+                      type="radio"
+                      value="3"
+                      class="radio radio-sm radio-error"
+                      :disabled="submitting"
+                    />
+                    <span class="label-text">No</span>
+                  </label>
+                  <label class="cursor-pointer inline-flex items-center gap-2">
+                    <input
+                      v-model="voteOption"
+                      type="radio"
+                      value="4"
+                      class="radio radio-sm radio-warning"
+                      :disabled="submitting"
+                    />
+                    <span class="label-text">No With Veto</span>
+                  </label>
+                  <label class="cursor-pointer inline-flex items-center gap-2">
+                    <input
+                      v-model="voteOption"
+                      type="radio"
+                      value="2"
+                      class="radio radio-sm"
+                      :disabled="submitting"
+                    />
+                    <span class="label-text">Abstain</span>
+                  </label>
+                </div>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="form-control">
+                <label class="label"
+                  ><span class="label-text">Balances</span></label
+                >
+                <input
+                  type="text"
+                  class="input input-bordered bg-base-200 w-full"
+                  :value="balanceLabel"
+                  readonly
+                />
+              </div>
+
+              <div class="form-control">
+                <label class="label"
+                  ><span class="label-text">Recipient</span></label
+                >
+                <input
+                  v-model="recipient"
+                  type="text"
+                  placeholder="qbtc1…"
+                  class="input input-bordered bg-base-200 w-full"
                   :disabled="submitting"
                 />
-                <span
-                  class="badge badge-ghost bg-base-300 border-0 uppercase"
-                  >qbtc</span
+              </div>
+
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">Amount</span>
+                </label>
+                <label
+                  class="input input-bordered bg-base-200 w-full flex items-center gap-2"
                 >
-              </label>
-            </div>
+                  <input
+                    v-model="amountInput"
+                    type="text"
+                    inputmode="decimal"
+                    placeholder="0.0"
+                    class="grow bg-transparent outline-none border-0 p-0"
+                    :disabled="submitting"
+                  />
+                  <span
+                    class="badge badge-ghost bg-base-300 border-0 uppercase"
+                    >qbtc</span
+                  >
+                </label>
+              </div>
+            </template>
 
             <div class="form-control mt-2">
               <label class="cursor-pointer inline-flex items-center gap-2">
