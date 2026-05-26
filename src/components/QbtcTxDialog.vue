@@ -5,11 +5,13 @@
  * The CDN widget's signer factory only knows Kepler / Leap / Metamask /
  * Ledger; calling Send with a QBTC wallet trips its `"No wallet connected"`
  * branch. QBTC also signs with ML-DSA-44, which Keplr's offline signer can't
- * produce. So we render a daisyUI modal here and route Send straight to
- * `window.vultisig.qbtc.request({ method: 'send_transaction', ... })`.
+ * produce. So we render a daisyUI modal here and route Send/Transfer straight
+ * to `window.vultisig.qbtc.request({ method: 'send_transaction', ... })`.
  *
- * Reuses the existing `<label for="send">` open trigger by mounting a hidden
- * `<input id="send" type="checkbox">` with the daisyUI modal-toggle pattern.
+ * Reuses the existing `<label for="send">` and `<label for="transfer">` open
+ * triggers by mounting hidden `<input id="send|transfer" type="checkbox">`
+ * toggles with the daisyUI modal-toggle pattern. All QBTC divergence stays
+ * inside this file so shared upstream pages don't need to change.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { fromBech32 } from '@cosmjs/encoding';
@@ -21,9 +23,20 @@ import {
 } from '@/libs/vultisig-qbtc';
 import router from '@/router';
 
+type ModalMode = 'send' | 'transfer';
+
 const walletStore = useWalletStore();
 const chainStore = useBlockchain();
 
+// Both buttons go through the same provider call today — `window.vultisig.qbtc`
+// only exposes `send_transaction`. Keeping the modal definitions in one array
+// means adding Delegate / Withdraw later is just another entry.
+const modes: ReadonlyArray<{ id: ModalMode; title: string; submitting: string }> = [
+  { id: 'send', title: 'Send', submitting: 'Sending…' },
+  { id: 'transfer', title: 'Transfer', submitting: 'Transferring…' },
+];
+
+const mode = ref<ModalMode>('send');
 const recipient = ref('');
 const amountInput = ref('');
 const memo = ref('');
@@ -64,6 +77,10 @@ const balanceLabel = computed(() => {
   return `${baseToDecimal(qbtcBalance.value.amount)} QBTC`;
 });
 
+const activeModeMeta = computed(
+  () => modes.find((m) => m.id === mode.value) ?? modes[0]
+);
+
 function isValidQbtcAddress(addr: string): boolean {
   try {
     const { prefix } = fromBech32(addr);
@@ -74,7 +91,7 @@ function isValidQbtcAddress(addr: string): boolean {
 }
 
 function closeModal() {
-  const cb = document.getElementById('send');
+  const cb = document.getElementById(mode.value);
   if (cb instanceof HTMLInputElement) cb.checked = false;
 }
 
@@ -88,15 +105,19 @@ function resetForm() {
   submitting.value = false;
 }
 
-// Reset every time the modal flips to open. Watching the store's `type`
-// misses the case of opening Send twice in a row (value doesn't change),
-// so we hook the daisyUI modal-toggle checkbox directly.
-function onSendToggleChange(e: Event) {
+// Reset every time a modal flips to open. Watching the store's `type`
+// misses the case of opening the same modal twice in a row (value doesn't
+// change), so we hook the daisyUI modal-toggle checkboxes directly.
+function onToggleChange(e: Event) {
   const t = e.target as HTMLInputElement | null;
-  if (t?.id === 'send' && t.checked) resetForm();
+  if (!t || !t.checked) return;
+  if (t.id === 'send' || t.id === 'transfer') {
+    mode.value = t.id;
+    resetForm();
+  }
 }
-onMounted(() => document.addEventListener('change', onSendToggleChange));
-onUnmounted(() => document.removeEventListener('change', onSendToggleChange));
+onMounted(() => document.addEventListener('change', onToggleChange));
+onUnmounted(() => document.removeEventListener('change', onToggleChange));
 
 async function onSubmit() {
   errorMsg.value = '';
@@ -155,141 +176,143 @@ function viewTx() {
 
 <template>
   <Teleport to="body">
-    <input type="checkbox" id="send" class="modal-toggle" />
-    <div class="modal qbtc-tx-modal">
-      <div class="modal-box relative">
-        <label
-          for="send"
-          class="btn btn-sm btn-circle absolute right-2 top-2"
-          >✕</label
-        >
-        <h3 class="font-bold text-lg">Send</h3>
+    <template v-for="m in modes" :key="m.id">
+      <input type="checkbox" :id="m.id" class="modal-toggle" />
+      <div class="modal qbtc-tx-modal">
+        <div class="modal-box relative">
+          <label
+            :for="m.id"
+            class="btn btn-sm btn-circle absolute right-2 top-2"
+            >✕</label
+          >
+          <h3 class="font-bold text-lg">{{ m.title }}</h3>
 
-        <div v-if="!txHash">
-          <div class="form-control">
-            <label class="label"><span class="label-text">Sender</span></label>
-            <input
-              type="text"
-              class="input input-bordered bg-base-200 w-full"
-              :value="walletStore.currentAddress"
-              readonly
-            />
-          </div>
-
-          <div class="form-control">
-            <label class="label"><span class="label-text">Balances</span></label>
-            <input
-              type="text"
-              class="input input-bordered bg-base-200 w-full"
-              :value="balanceLabel"
-              readonly
-            />
-          </div>
-
-          <div class="form-control">
-            <label class="label"
-              ><span class="label-text">Recipient</span></label
-            >
-            <input
-              v-model="recipient"
-              type="text"
-              placeholder="qbtc1…"
-              class="input input-bordered bg-base-200 w-full"
-              :disabled="submitting"
-            />
-          </div>
-
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">Amount</span>
-            </label>
-            <label
-              class="input input-bordered bg-base-200 w-full flex items-center gap-2"
-            >
+          <div v-if="!txHash">
+            <div class="form-control">
+              <label class="label"><span class="label-text">Sender</span></label>
               <input
-                v-model="amountInput"
                 type="text"
-                inputmode="decimal"
-                placeholder="0.0"
-                class="grow bg-transparent outline-none border-0 p-0"
+                class="input input-bordered bg-base-200 w-full"
+                :value="walletStore.currentAddress"
+                readonly
+              />
+            </div>
+
+            <div class="form-control">
+              <label class="label"><span class="label-text">Balances</span></label>
+              <input
+                type="text"
+                class="input input-bordered bg-base-200 w-full"
+                :value="balanceLabel"
+                readonly
+              />
+            </div>
+
+            <div class="form-control">
+              <label class="label"
+                ><span class="label-text">Recipient</span></label
+              >
+              <input
+                v-model="recipient"
+                type="text"
+                placeholder="qbtc1…"
+                class="input input-bordered bg-base-200 w-full"
                 :disabled="submitting"
               />
-              <span
-                class="badge badge-ghost bg-base-300 border-0 uppercase"
-                >qbtc</span
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">Amount</span>
+              </label>
+              <label
+                class="input input-bordered bg-base-200 w-full flex items-center gap-2"
               >
-            </label>
-          </div>
+                <input
+                  v-model="amountInput"
+                  type="text"
+                  inputmode="decimal"
+                  placeholder="0.0"
+                  class="grow bg-transparent outline-none border-0 p-0"
+                  :disabled="submitting"
+                />
+                <span
+                  class="badge badge-ghost bg-base-300 border-0 uppercase"
+                  >qbtc</span
+                >
+              </label>
+            </div>
 
-          <div class="form-control mt-2">
-            <label class="label cursor-pointer justify-start gap-2 pl-0">
+            <div class="form-control mt-2">
+              <label class="cursor-pointer inline-flex items-center gap-2">
+                <input
+                  v-model="showAdvanced"
+                  type="checkbox"
+                  class="checkbox checkbox-xs rounded-full"
+                />
+                <span class="label-text">Advance</span>
+              </label>
+            </div>
+            <div v-if="showAdvanced" class="form-control">
+              <label class="label"><span class="label-text">Memo</span></label>
               <input
-                v-model="showAdvanced"
-                type="checkbox"
-                class="checkbox checkbox-xs rounded-full"
+                v-model="memo"
+                type="text"
+                class="input input-bordered bg-base-200 w-full"
+                :disabled="submitting"
               />
-              <span class="label-text">Advance</span>
-            </label>
-          </div>
-          <div v-if="showAdvanced" class="form-control">
-            <label class="label"><span class="label-text">Memo</span></label>
-            <input
-              v-model="memo"
-              type="text"
-              class="input input-bordered bg-base-200 w-full"
-              :disabled="submitting"
-            />
-          </div>
+            </div>
 
-          <div
-            v-if="errorMsg"
-            class="alert alert-error mt-3 text-sm py-2"
-            style="overflow-wrap: anywhere"
-          >
-            <span>{{ errorMsg }}</span>
-          </div>
-
-          <div class="modal-action mt-4">
-            <label
-              for="send"
-              class="btn btn-ghost"
-              :class="{ 'btn-disabled': submitting }"
-              >Cancel</label
+            <div
+              v-if="errorMsg"
+              class="alert alert-error mt-3 text-sm py-2"
+              style="overflow-wrap: anywhere"
             >
-            <button
-              class="btn btn-primary"
-              :disabled="submitting"
-              @click="onSubmit"
-            >
-              <span
-                v-if="submitting"
-                class="loading loading-spinner loading-xs mr-1"
-              ></span>
-              {{ submitting ? 'Sending…' : 'Send' }}
-            </button>
-          </div>
-        </div>
+              <span>{{ errorMsg }}</span>
+            </div>
 
-        <div v-else>
-          <div class="alert alert-success text-sm py-2 mt-2">
-            <span>Transaction submitted.</span>
+            <div class="modal-action mt-4">
+              <label
+                :for="m.id"
+                class="btn btn-ghost"
+                :class="{ 'btn-disabled': submitting }"
+                >Cancel</label
+              >
+              <button
+                class="btn btn-primary"
+                :disabled="submitting"
+                @click="onSubmit"
+              >
+                <span
+                  v-if="submitting"
+                  class="loading loading-spinner loading-xs mr-1"
+                ></span>
+                {{ submitting ? activeModeMeta.submitting : activeModeMeta.title }}
+              </button>
+            </div>
           </div>
-          <div class="form-control">
-            <label class="label"><span class="label-text">Tx hash</span></label>
-            <input
-              type="text"
-              class="input input-bordered bg-base-200 w-full"
-              :value="txHash"
-              readonly
-            />
-          </div>
-          <div class="modal-action mt-4">
-            <label for="send" class="btn btn-ghost">Close</label>
-            <button class="btn btn-primary" @click="viewTx">View</button>
+
+          <div v-else>
+            <div class="alert alert-success text-sm py-2 mt-2">
+              <span>Transaction submitted.</span>
+            </div>
+            <div class="form-control">
+              <label class="label"><span class="label-text">Tx hash</span></label>
+              <input
+                type="text"
+                class="input input-bordered bg-base-200 w-full"
+                :value="txHash"
+                readonly
+              />
+            </div>
+            <div class="modal-action mt-4">
+              <label :for="m.id" class="btn btn-ghost">Close</label>
+              <button class="btn btn-primary" @click="viewTx">View</button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </template>
   </Teleport>
 </template>
 
