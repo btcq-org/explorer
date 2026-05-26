@@ -52,8 +52,7 @@ async function initParamsForKeplr() {
     average: 0.025,
     high: 0.03,
   };
-  const coinDecimals =
-    chain.assets[0].denom_units.find((x) => x.denom === chain.assets[0].symbol.toLowerCase())?.exponent || 6;
+  const coinDecimals = Number(chain.assets[0].exponent ?? 6);
   conf.value = JSON.stringify(
     {
       chainId: chainid,
@@ -126,7 +125,7 @@ async function initSnap() {
         {
           coinDenom: token.display,
           coinMinimalDenom: token.base,
-          coinDecimals: token.denom_units.find((x) => x.denom === token.display)?.exponent || 6,
+          coinDecimals: Number(token.exponent ?? 6),
           coinGeckoId: token.coingecko_id,
           gasPriceStep: {
             low: 0.0625,
@@ -186,8 +185,7 @@ function suggest() {
       </button>
 
       <div class="mt-4">
-        If the chain is not offically support on Keplr/Metamask Snap, you can submit these parameters to enable
-        Keplr/Metamask Snap.
+        If the chain is not officially supported by {{ wallet }}, you can submit these parameters to register it.
       </div>
     </div>
 

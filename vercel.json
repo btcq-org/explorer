@@ -1,0 +1,6 @@
+{
+  "routes": [
+    { "src": "^/$", "status": 308, "headers": { "Location": "/qbtc" } },
+    { "src": "/[^.]+", "dest": "/", "status": 200 }
+  ]
+}
