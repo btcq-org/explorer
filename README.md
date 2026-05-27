@@ -14,8 +14,8 @@
 
 | | URL |
 |--|--|
-| LCD (API) | https://qbtcapi.odindex.io |
-| RPC | https://qbtcrpc.odindex.io |
+| LCD (API) | https://api.vultisig.com/qbtc-rpc |
+| RPC | https://api.vultisig.com/qbtc-rpc |
 | Address prefix | `qbtc` |
 
 The chain config lives at [chains/mainnet/qbtc.json](chains/mainnet/qbtc.json).
