@@ -114,7 +114,7 @@ function metaItem(metadata: string | undefined): { title: string; summary: strin
                 class="btn btn-xs btn-primary rounded-sm"
                 @click="
                   dialog.open('vote', {
-                    proposal_id: item?.proposal_id,
+                    proposal_id: item?.proposal_id || (item as any)?.id,
                   })
                 "
               >
@@ -195,7 +195,7 @@ function metaItem(metadata: string | undefined): { title: string; summary: strin
               class="btn btn-xs btn-primary rounded-sm"
               @click="
                 dialog.open('vote', {
-                  proposal_id: item?.proposal_id,
+                  proposal_id: item?.proposal_id || (item as any)?.id,
                 })
               "
             >

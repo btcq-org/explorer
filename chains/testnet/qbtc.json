@@ -1,0 +1,24 @@
+{
+  "chain_name": "qbtc",
+  "registry_name": "qbtc",
+  "logo": "https://raw.githubusercontent.com/vultisig/vultisig-windows/refs/heads/main/core/ui/public/coins/qbtc.svg",
+  "api": [
+    "https://qbtcapi.odindex.io"
+  ],
+  "rpc": [
+    "https://qbtcrpc.odindex.io"
+  ],
+  "sdk_version": "0.53.4",
+  "coin_type": "118",
+  "min_tx_fee": "800",
+  "addr_prefix": "qbtc",
+  "assets": [
+    {
+      "base": "qbtc",
+      "symbol": "QBTC",
+      "exponent": "8",
+      "coingecko_id": "",
+      "logo": "https://raw.githubusercontent.com/vultisig/vultisig-windows/refs/heads/main/core/ui/public/coins/qbtc.svg"
+    }
+  ]
+}
