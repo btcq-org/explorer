@@ -8,14 +8,14 @@
 
 </div>
 
-`qBTC Explorer` is a single-chain explorer for [qBTC](https://qbtcapi.odindex.io), built on top of [Ping Dashboard](https://github.com/ping-pub/explorer). It fetches data live from the qBTC LCD/RPC endpoints with no caching or pre-processing — what you see is the chain's actual state at the moment of query.
+`qBTC Explorer` is a single-chain explorer for [qBTC](https://api.vultisig.com/qbtc-rpc), built on top of [Ping Dashboard](https://github.com/ping-pub/explorer). It fetches data live from the qBTC LCD/RPC endpoints with no caching or pre-processing — what you see is the chain's actual state at the moment of query.
 
 ## Endpoints
 
 | | URL |
 |--|--|
 | LCD (API) | https://api.vultisig.com/qbtc-rpc |
-| RPC | https://api.vultisig.com/qbtc-rpc |
+| RPC | https://api.vultisig.com/qbtc-node |
 | Address prefix | `qbtc` |
 
 The chain config lives at [chains/mainnet/qbtc.json](chains/mainnet/qbtc.json).
