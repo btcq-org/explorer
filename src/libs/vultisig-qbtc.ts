@@ -54,6 +54,27 @@ export function isQbtcProviderAvailable(): boolean {
 }
 
 /**
+ * The Vultisig extension keeps the dApp authorized after a manual
+ * disconnect, so `get_accounts` would silently re-connect on the next page
+ * load. We can't revoke that grant from here (the provider exposes no
+ * disconnect method), so we persist a sticky flag: set on manual disconnect,
+ * cleared on an explicit re-connect. `restoreQbtcSilently` honors it.
+ */
+const QBTC_DISCONNECT_KEY = 'qbtc-manual-disconnect';
+
+export function markQbtcDisconnected(): void {
+  localStorage.setItem(QBTC_DISCONNECT_KEY, '1');
+}
+
+export function clearQbtcDisconnected(): void {
+  localStorage.removeItem(QBTC_DISCONNECT_KEY);
+}
+
+export function isQbtcManuallyDisconnected(): boolean {
+  return localStorage.getItem(QBTC_DISCONNECT_KEY) === '1';
+}
+
+/**
  * Open the Vultisig grant-access popup and return the connected QBTC bech32
  * address. Throws an `EIP1193`-style error with `.code`:
  *   - 4001 if the user rejects the popup

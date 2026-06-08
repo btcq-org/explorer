@@ -5,9 +5,12 @@ import { Icon } from '@iconify/vue';
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import { suggestKeplrChain } from '@/libs/keplr';
 import {
+  clearQbtcDisconnected,
   describeQbtcError,
   getAuthorizedQbtcAccount,
+  isQbtcManuallyDisconnected,
   isQbtcProviderAvailable,
+  markQbtcDisconnected,
   requestQbtcAccount,
 } from '@/libs/vultisig-qbtc';
 
@@ -49,6 +52,13 @@ watch(
 // });
 function walletStateChange(res: any) {
   walletStore.setConnectedWallet(res.detail?.value);
+}
+
+// Manual disconnect: clear local state AND set the sticky flag so the QBTC
+// provider's lingering authorization doesn't silently reconnect on refresh.
+function disconnectWallet() {
+  markQbtcDisconnected();
+  walletStore.disconnect();
 }
 let showCopyToast = ref(0);
 async function copyAdress(address: string) {
@@ -119,6 +129,9 @@ async function connectQbtcFromModal() {
   removeQbtcModalError();
   try {
     const address = await requestQbtcAccount();
+    // Explicit user intent to connect — drop any sticky disconnect flag so
+    // future page loads are allowed to silently restore again.
+    clearQbtcDisconnected();
     walletStore.setConnectedWallet({
       wallet: 'vultisig',
       cosmosAddress: address,
@@ -135,6 +148,9 @@ async function connectQbtcFromModal() {
 // popup. Skip when a wallet is already in local state.
 async function restoreQbtcSilently() {
   if (walletStore.currentAddress) return;
+  // The user explicitly disconnected — don't re-attach even though the
+  // Vultisig extension still reports the dApp as authorized.
+  if (isQbtcManuallyDisconnected()) return;
   if (!isQbtcProviderAvailable()) return;
   try {
     const address = await getAuthorizedQbtcAccount();
@@ -254,7 +270,7 @@ onUnmounted(() => {
         <a
           v-if="walletStore.currentAddress"
           class="block py-2 px-2 hover:bg-gray-100 dark:hover:bg-[#353f5a] rounded cursor-pointer"
-          @click="walletStore.disconnect()"
+          @click="disconnectWallet()"
           >Disconnect</a
         >
       </div>
