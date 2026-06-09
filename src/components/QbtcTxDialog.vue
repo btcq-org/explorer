@@ -21,6 +21,7 @@ import { useBlockchain, useStakingStore, useTxDialog, useWalletStore } from '@/s
 import {
   describeQbtcError,
   isQbtcProviderAvailable,
+  qbtcDefaultFee,
   sendQbtcTransaction,
   signAndBroadcastQbtc,
 } from '@/libs/vultisig-qbtc';
@@ -228,6 +229,7 @@ async function onSubmit() {
           },
         ],
         memo: memo.value.trim() || undefined,
+        fee: qbtcDefaultFee(),
       });
       txHash.value = hash;
       confirmedEvent({ hash });
@@ -265,6 +267,7 @@ async function onSubmit() {
           },
         ],
         memo: memo.value.trim() || undefined,
+        fee: qbtcDefaultFee(),
       });
       txHash.value = hash;
       confirmedEvent({ hash });

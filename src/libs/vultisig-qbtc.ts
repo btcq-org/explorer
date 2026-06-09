@@ -34,10 +34,39 @@ export interface QbtcCosmosMessage {
   value: Record<string, any>;
 }
 
+export interface QbtcCoin {
+  denom: string;
+  amount: string;
+}
+
+// Optional fee/gas override accepted by the provider's `sign_and_broadcast`.
+// `gas` is the gas_limit as a string; `amount` is the fee coins. When omitted,
+// the extension falls back to its hardcoded default (gas 300000, fee 800),
+// which is too low for the large ML-DSA-44 signature on staking/gov messages.
+export interface QbtcFee {
+  amount: QbtcCoin[];
+  gas: string;
+}
+
 export interface QbtcSignAndBroadcastParams {
   from: string;
   messages: QbtcCosmosMessage[];
   memo?: string;
+  fee?: QbtcFee;
+}
+
+// QBTC's bond/fee denom and the chain-enforced flat minimum tx fee.
+export const QBTC_FEE_DENOM = 'qbtc';
+export const QBTC_MIN_FEE_AMOUNT = '800';
+
+// The extension defaults gas_limit to 300000, but a MsgDelegate signed with
+// ML-DSA-44 consumes ~301k+ (the signature is multi-KB → high WritePerByte
+// gas), so a delegate tx runs out of gas. Request a comfortable ceiling; the
+// flat min fee (800) is unaffected by the gas_limit on this chain.
+export const QBTC_SIGN_GAS_LIMIT = '500000';
+
+export function qbtcDefaultFee(gas: string = QBTC_SIGN_GAS_LIMIT): QbtcFee {
+  return { amount: [{ denom: QBTC_FEE_DENOM, amount: QBTC_MIN_FEE_AMOUNT }], gas };
 }
 
 // EIP-1193 error codes used by the QBTC provider.
