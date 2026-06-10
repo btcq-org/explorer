@@ -17,29 +17,31 @@
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { fromBech32 } from '@cosmjs/encoding';
-import { useBlockchain, useTxDialog, useWalletStore } from '@/stores';
+import { useBlockchain, useStakingStore, useTxDialog, useWalletStore } from '@/stores';
 import {
   describeQbtcError,
   isQbtcProviderAvailable,
+  qbtcDefaultFee,
   sendQbtcTransaction,
   signAndBroadcastQbtc,
 } from '@/libs/vultisig-qbtc';
 import router from '@/router';
 
-type ModalMode = 'send' | 'transfer' | 'vote';
+type ModalMode = 'send' | 'transfer' | 'vote' | 'delegate';
 
 const walletStore = useWalletStore();
 const chainStore = useBlockchain();
 const dialogStore = useTxDialog();
+const stakingStore = useStakingStore();
 
 // Send/Transfer go through `window.vultisig.qbtc`'s `send_transaction` (bank
-// only). Vote is wired up to the same upstream `dialog.open('vote', …)` entry
-// point but will fail at submit until the Vultisig provider exposes a generic
-// message signer — see onSubmit() for the stub branch.
+// only). Vote and Delegate are wired to the same upstream `dialog.open(…)`
+// entry points and submit via the provider's generic `sign_and_broadcast`.
 const modes: ReadonlyArray<{ id: ModalMode; title: string; submitting: string }> = [
   { id: 'send', title: 'Send', submitting: 'Sending…' },
   { id: 'transfer', title: 'Transfer', submitting: 'Transferring…' },
   { id: 'vote', title: 'Vote', submitting: 'Voting…' },
+  { id: 'delegate', title: 'Delegate', submitting: 'Delegating…' },
 ];
 
 const mode = ref<ModalMode>('send');
@@ -67,6 +69,45 @@ const proposalId = computed(() => {
   } catch {
     return '';
   }
+});
+
+// Delegate state. When opened from a validator page the operator address rides
+// in on `params.validator_address`; from the account/dashboard page it arrives
+// empty (`{}`) and the user picks one from the dropdown. Like `proposalId`,
+// read the param via a computed so submit/render always see the latest store
+// value (the label's native `change` fires before the sibling `dialog.open`).
+const validatorFromParams = computed(() => {
+  try {
+    const parsed = JSON.parse(dialogStore.params || '{}');
+    return parsed.validator_address ? String(parsed.validator_address) : '';
+  } catch {
+    return '';
+  }
+});
+
+// User's dropdown choice when no validator was pre-supplied.
+const validatorChoice = ref('');
+
+const selectedValidator = computed(
+  () => validatorFromParams.value || validatorChoice.value
+);
+
+const bondDenom = computed(() => stakingStore.params?.bond_denom || 'qbtc');
+
+const validatorOptions = computed(() =>
+  [...stakingStore.validators]
+    .filter((v) => v.operator_address)
+    .map((v) => ({
+      address: v.operator_address,
+      moniker: v.description?.moniker || v.operator_address,
+    }))
+);
+
+const selectedValidatorMoniker = computed(() => {
+  const match = validatorOptions.value.find(
+    (v) => v.address === selectedValidator.value
+  );
+  return match?.moniker || selectedValidator.value;
 });
 
 const QBTC_DECIMALS = 8;
@@ -128,6 +169,7 @@ function resetForm() {
   txHash.value = '';
   submitting.value = false;
   voteOption.value = '1';
+  validatorChoice.value = '';
 }
 
 // Reset every time a modal flips to open. Watching the store's `type`
@@ -136,9 +178,20 @@ function resetForm() {
 function onToggleChange(e: Event) {
   const t = e.target as HTMLInputElement | null;
   if (!t || !t.checked) return;
-  if (t.id === 'send' || t.id === 'transfer' || t.id === 'vote') {
+  if (
+    t.id === 'send' ||
+    t.id === 'transfer' ||
+    t.id === 'vote' ||
+    t.id === 'delegate'
+  ) {
     mode.value = t.id;
     resetForm();
+    // The dropdown needs the active validator set. On the account/dashboard
+    // page that list may not have been fetched yet; pull it lazily so the
+    // <select> populates reactively.
+    if (t.id === 'delegate' && stakingStore.validators.length === 0) {
+      stakingStore.fetchAcitveValdiators();
+    }
   }
 }
 onMounted(() => document.addEventListener('change', onToggleChange));
@@ -176,6 +229,45 @@ async function onSubmit() {
           },
         ],
         memo: memo.value.trim() || undefined,
+        fee: qbtcDefaultFee(),
+      });
+      txHash.value = hash;
+      confirmedEvent({ hash });
+    } catch (e) {
+      errorMsg.value = describeQbtcError(e);
+    } finally {
+      submitting.value = false;
+    }
+    return;
+  }
+
+  if (mode.value === 'delegate') {
+    const validator = selectedValidator.value;
+    if (!validator) {
+      errorMsg.value = 'Select a validator.';
+      return;
+    }
+    const baseUnits = decimalToBase(amountInput.value.trim());
+    if (!baseUnits) {
+      errorMsg.value = `Amount must be a positive QBTC value (up to ${QBTC_DECIMALS} decimal places).`;
+      return;
+    }
+    submitting.value = true;
+    try {
+      const hash: string = await signAndBroadcastQbtc({
+        from,
+        messages: [
+          {
+            typeUrl: '/cosmos.staking.v1beta1.MsgDelegate',
+            value: {
+              delegatorAddress: from,
+              validatorAddress: validator,
+              amount: { denom: bondDenom.value, amount: baseUnits },
+            },
+          },
+        ],
+        memo: memo.value.trim() || undefined,
+        fee: qbtcDefaultFee(),
       });
       txHash.value = hash;
       confirmedEvent({ hash });
@@ -328,7 +420,35 @@ function viewTx() {
                 />
               </div>
 
-              <div class="form-control">
+              <div v-if="m.id === 'delegate'" class="form-control">
+                <label class="label"
+                  ><span class="label-text">Validator</span></label
+                >
+                <input
+                  v-if="validatorFromParams"
+                  type="text"
+                  class="input input-bordered bg-base-200 w-full"
+                  :value="selectedValidatorMoniker"
+                  readonly
+                />
+                <select
+                  v-else
+                  v-model="validatorChoice"
+                  class="select select-bordered bg-base-200 w-full"
+                  :disabled="submitting"
+                >
+                  <option value="" disabled>Select a validator</option>
+                  <option
+                    v-for="v in validatorOptions"
+                    :key="v.address"
+                    :value="v.address"
+                  >
+                    {{ v.moniker }}
+                  </option>
+                </select>
+              </div>
+
+              <div v-else class="form-control">
                 <label class="label"
                   ><span class="label-text">Recipient</span></label
                 >
@@ -489,6 +609,24 @@ function viewTx() {
   height: 100%;
   font-size: inherit;
   color: inherit;
+}
+.qbtc-tx-modal .modal-box .select {
+  height: 3rem;
+  min-height: 3rem;
+  padding-left: 1rem;
+  padding-right: 2.5rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  width: 100%;
+  border-radius: 0.5rem;
+  background-color: transparent;
+  border: 1px solid hsl(var(--bc) / 0.15);
+  color: hsl(var(--bc));
+  outline: none;
+}
+.qbtc-tx-modal .modal-box .select:focus,
+.qbtc-tx-modal .modal-box .select:focus-within {
+  border-color: hsl(var(--p) / 0.6);
 }
 .qbtc-tx-modal .modal-box .badge {
   text-transform: uppercase;
