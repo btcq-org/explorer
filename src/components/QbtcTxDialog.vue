@@ -22,12 +22,13 @@ import {
   describeQbtcError,
   isQbtcProviderAvailable,
   qbtcDefaultFee,
+  QBTC_SIGN_GAS_LIMIT,
   sendQbtcTransaction,
   signAndBroadcastQbtc,
 } from '@/libs/vultisig-qbtc';
 import router from '@/router';
 
-type ModalMode = 'send' | 'transfer' | 'vote' | 'delegate';
+type ModalMode = 'send' | 'transfer' | 'vote' | 'delegate' | 'withdraw';
 
 const walletStore = useWalletStore();
 const chainStore = useBlockchain();
@@ -35,13 +36,15 @@ const dialogStore = useTxDialog();
 const stakingStore = useStakingStore();
 
 // Send/Transfer go through `window.vultisig.qbtc`'s `send_transaction` (bank
-// only). Vote and Delegate are wired to the same upstream `dialog.open(…)`
-// entry points and submit via the provider's generic `sign_and_broadcast`.
+// only). Vote, Delegate and Withdraw are wired to the same upstream
+// `dialog.open(…)` entry points and submit via the provider's generic
+// `sign_and_broadcast`.
 const modes: ReadonlyArray<{ id: ModalMode; title: string; submitting: string }> = [
   { id: 'send', title: 'Send', submitting: 'Sending…' },
   { id: 'transfer', title: 'Transfer', submitting: 'Transferring…' },
   { id: 'vote', title: 'Vote', submitting: 'Voting…' },
   { id: 'delegate', title: 'Delegate', submitting: 'Delegating…' },
+  { id: 'withdraw', title: 'Withdraw Reward', submitting: 'Withdrawing…' },
 ];
 
 const mode = ref<ModalMode>('send');
@@ -108,6 +111,38 @@ const selectedValidatorMoniker = computed(() => {
     (v) => v.address === selectedValidator.value
   );
   return match?.moniker || selectedValidator.value;
+});
+
+// Withdraw rewards. A specific validator rides in on `params.validator_address`
+// (dashboard / account rows); opened with empty params (account header) it
+// claims from every active delegation in one tx. Read the param via a computed
+// for the same staleness reason as `proposalId`/`validatorFromParams`.
+const withdrawValidators = computed(() => {
+  if (validatorFromParams.value) return [validatorFromParams.value];
+  return walletStore.delegations
+    .map((d) => d.delegation.validator_address)
+    .filter(Boolean);
+});
+
+// Distribution rewards are DecCoins — base-unit amounts carried with 18-digit
+// fractional precision (e.g. "1500000000.000000000000000000"). Floor to whole
+// base units before the integer base→QBTC conversion.
+function formatRewardQbtc(decRaw: string): string {
+  const intPart = (decRaw || '0').split('.')[0] || '0';
+  return baseToDecimal(intPart);
+}
+
+const withdrawRewardLabel = computed(() => {
+  const denom = bondDenom.value;
+  if (validatorFromParams.value) {
+    const entry = walletStore.rewards.rewards?.find(
+      (r) => r.validator_address === validatorFromParams.value
+    );
+    const coin = entry?.reward?.find((c) => c.denom === denom);
+    return `${formatRewardQbtc(coin?.amount ?? '0')} QBTC`;
+  }
+  const total = walletStore.rewards.total?.find((c) => c.denom === denom);
+  return `${formatRewardQbtc(total?.amount ?? '0')} QBTC`;
 });
 
 const QBTC_DECIMALS = 8;
@@ -182,15 +217,24 @@ function onToggleChange(e: Event) {
     t.id === 'send' ||
     t.id === 'transfer' ||
     t.id === 'vote' ||
-    t.id === 'delegate'
+    t.id === 'delegate' ||
+    t.id === 'withdraw'
   ) {
     mode.value = t.id;
     resetForm();
-    // The dropdown needs the active validator set. On the account/dashboard
-    // page that list may not have been fetched yet; pull it lazily so the
-    // <select> populates reactively.
-    if (t.id === 'delegate' && stakingStore.validators.length === 0) {
+    // The delegate dropdown needs the active validator set; the withdraw modal
+    // needs it for the validator moniker. On the account/dashboard page that
+    // list may not be fetched yet; pull it lazily so the UI fills in reactively.
+    if (
+      (t.id === 'delegate' || t.id === 'withdraw') &&
+      stakingStore.validators.length === 0
+    ) {
       stakingStore.fetchAcitveValdiators();
+    }
+    // Withdraw-all enumerates the user's delegations and reads pending reward
+    // amounts; make sure both are loaded.
+    if (t.id === 'withdraw' && walletStore.delegations.length === 0) {
+      walletStore.loadMyAsset();
     }
   }
 }
@@ -268,6 +312,40 @@ async function onSubmit() {
         ],
         memo: memo.value.trim() || undefined,
         fee: qbtcDefaultFee(),
+      });
+      txHash.value = hash;
+      confirmedEvent({ hash });
+    } catch (e) {
+      errorMsg.value = describeQbtcError(e);
+    } finally {
+      submitting.value = false;
+    }
+    return;
+  }
+
+  if (mode.value === 'withdraw') {
+    const validators = withdrawValidators.value;
+    if (!validators.length) {
+      errorMsg.value = 'No delegations to withdraw rewards from.';
+      return;
+    }
+    submitting.value = true;
+    try {
+      // Gas scales with message count: the base ceiling covers the multi-KB
+      // ML-DSA signature; each extra MsgWithdrawDelegatorReward adds a bit
+      // more. The flat min fee (800) is independent of gas_limit on this
+      // chain, so over-requesting gas is harmless.
+      const gas = String(
+        Number(QBTC_SIGN_GAS_LIMIT) + Math.max(0, validators.length - 1) * 200000
+      );
+      const hash: string = await signAndBroadcastQbtc({
+        from,
+        messages: validators.map((validatorAddress) => ({
+          typeUrl: '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward',
+          value: { delegatorAddress: from, validatorAddress },
+        })),
+        memo: memo.value.trim() || undefined,
+        fee: qbtcDefaultFee(gas),
       });
       txHash.value = hash;
       confirmedEvent({ hash });
@@ -404,6 +482,45 @@ function viewTx() {
                     <span class="label-text">Abstain</span>
                   </label>
                 </div>
+              </div>
+            </template>
+
+            <template v-else-if="m.id === 'withdraw'">
+              <div v-if="validatorFromParams" class="form-control">
+                <label class="label"
+                  ><span class="label-text">Validator</span></label
+                >
+                <input
+                  type="text"
+                  class="input input-bordered bg-base-200 w-full"
+                  :value="selectedValidatorMoniker"
+                  readonly
+                />
+              </div>
+              <div v-else class="form-control">
+                <label class="label"
+                  ><span class="label-text">Validators</span></label
+                >
+                <input
+                  type="text"
+                  class="input input-bordered bg-base-200 w-full"
+                  :value="`${withdrawValidators.length} validator${
+                    withdrawValidators.length === 1 ? '' : 's'
+                  }`"
+                  readonly
+                />
+              </div>
+
+              <div class="form-control">
+                <label class="label"
+                  ><span class="label-text">Pending Reward</span></label
+                >
+                <input
+                  type="text"
+                  class="input input-bordered bg-base-200 w-full"
+                  :value="withdrawRewardLabel"
+                  readonly
+                />
               </div>
             </template>
 
