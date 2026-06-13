@@ -432,7 +432,7 @@ const amount = computed({
                 <div>
                   <label
                     for="delegate"
-                    class="btn !btn-xs !btn-primary btn-ghost rounded-sm mr-2"
+                    class="btn !btn-xs !bg-info !border-info text-white rounded-sm mr-2"
                     @click="
                       dialog.open('delegate', { validator_address: item.delegation.validator_address }, updateState)
                     "
@@ -441,7 +441,7 @@ const amount = computed({
                   </label>
                   <label
                     for="unbond"
-                    class="btn !btn-xs !btn-primary btn-ghost rounded-sm mr-2"
+                    class="btn !btn-xs !bg-no !border-no text-white rounded-sm mr-2"
                     @click="
                       dialog.open('unbond', { validator_address: item.delegation.validator_address }, updateState)
                     "
@@ -450,7 +450,7 @@ const amount = computed({
                   </label>
                   <label
                     for="withdraw"
-                    class="btn !btn-xs !btn-primary btn-ghost rounded-sm"
+                    class="btn !btn-xs !bg-yes !border-yes text-white rounded-sm"
                     @click="
                       dialog.open('withdraw', { validator_address: item.delegation.validator_address }, updateState)
                     "
