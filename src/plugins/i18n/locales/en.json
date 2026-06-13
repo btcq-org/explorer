@@ -52,7 +52,7 @@
     "btn_delegate": "Delegate",
     "btn_redelegate": "Redelegate",
     "btn_withdraw": "Withdraw",
-    "btn_unbond": "Unbond",
+    "btn_unbond": "Undelegate",
     "validator": "Validator",
     "delegation": "Delegation",
     "delegator": "Delegator",

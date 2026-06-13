@@ -51,7 +51,7 @@ const modes: ReadonlyArray<{ id: ModalMode; title: string; submitting: string }>
   { id: 'transfer', title: 'Transfer', submitting: 'Transferring…' },
   { id: 'vote', title: 'Vote', submitting: 'Voting…' },
   { id: 'delegate', title: 'Delegate', submitting: 'Delegating…' },
-  { id: 'unbond', title: 'Unbond', submitting: 'Unbonding…' },
+  { id: 'unbond', title: 'Undelegate', submitting: 'Undelegating…' },
   { id: 'withdraw', title: 'Withdraw Reward', submitting: 'Withdrawing…' },
   {
     id: 'withdraw_commission',
