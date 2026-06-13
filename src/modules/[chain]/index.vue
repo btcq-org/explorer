@@ -441,12 +441,21 @@ const amount = computed({
                   </label>
                   <label
                     for="withdraw"
-                    class="btn !btn-xs !btn-primary btn-ghost rounded-sm"
+                    class="btn !btn-xs !btn-primary btn-ghost rounded-sm mr-2"
                     @click="
                       dialog.open('withdraw', { validator_address: item.delegation.validator_address }, updateState)
                     "
                   >
                     {{ $t('index.btn_withdraw_reward') }}
+                  </label>
+                  <label
+                    for="unbond"
+                    class="btn !btn-xs !btn-primary btn-ghost rounded-sm"
+                    @click="
+                      dialog.open('unbond', { validator_address: item.delegation.validator_address }, updateState)
+                    "
+                  >
+                    {{ $t('account.btn_unbond') }}
                   </label>
                 </div>
               </td>
