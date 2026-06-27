@@ -7,13 +7,13 @@
  * branch. QBTC also signs with ML-DSA-44, which Keplr's offline signer can't
  * produce. So we render a daisyUI modal here and route Send/Transfer to
  * `window.vultisig.qbtc.request({ method: 'send_transaction', ... })` and
- * Vote (plus future Delegate / Withdraw / Deposit) to the provider's
- * generic `sign_and_broadcast` method.
+ * Vote / Deposit / Delegate / Withdraw to the provider's generic
+ * `sign_and_broadcast` method.
  *
- * Reuses the existing `<label for="send|transfer|vote">` open triggers by
- * mounting hidden `<input id="send|transfer|vote" type="checkbox">` toggles
- * with the daisyUI modal-toggle pattern. All QBTC divergence stays inside
- * this file so shared upstream pages don't need to change.
+ * Reuses the existing `<label for="send|transfer|vote|deposit|…">` open
+ * triggers by mounting hidden `<input id="…" type="checkbox">` toggles with
+ * the daisyUI modal-toggle pattern. All QBTC divergence stays inside this
+ * file so shared upstream pages don't need to change.
  */
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { fromBech32 } from '@cosmjs/encoding';
@@ -32,6 +32,7 @@ type ModalMode =
   | 'send'
   | 'transfer'
   | 'vote'
+  | 'deposit'
   | 'delegate'
   | 'withdraw'
   | 'withdraw_commission';
@@ -42,13 +43,14 @@ const dialogStore = useTxDialog();
 const stakingStore = useStakingStore();
 
 // Send/Transfer go through `window.vultisig.qbtc`'s `send_transaction` (bank
-// only). Vote, Delegate and Withdraw are wired to the same upstream
+// only). Vote, Deposit, Delegate and Withdraw are wired to the same upstream
 // `dialog.open(…)` entry points and submit via the provider's generic
 // `sign_and_broadcast`.
 const modes: ReadonlyArray<{ id: ModalMode; title: string; submitting: string }> = [
   { id: 'send', title: 'Send', submitting: 'Sending…' },
   { id: 'transfer', title: 'Transfer', submitting: 'Transferring…' },
   { id: 'vote', title: 'Vote', submitting: 'Voting…' },
+  { id: 'deposit', title: 'Deposit', submitting: 'Depositing…' },
   { id: 'delegate', title: 'Delegate', submitting: 'Delegating…' },
   { id: 'withdraw', title: 'Withdraw Reward', submitting: 'Withdrawing…' },
   {
@@ -249,12 +251,19 @@ function onToggleChange(e: Event) {
     t.id === 'send' ||
     t.id === 'transfer' ||
     t.id === 'vote' ||
+    t.id === 'deposit' ||
     t.id === 'delegate' ||
     t.id === 'withdraw' ||
     t.id === 'withdraw_commission'
   ) {
     mode.value = t.id;
     resetForm();
+    // Deposit shows the wallet balance so the user can size the deposit. The
+    // gov proposal page that opens this modal doesn't load wallet assets, so
+    // pull them lazily when they haven't been fetched yet.
+    if (t.id === 'deposit' && walletStore.balances.length === 0) {
+      walletStore.loadMyAsset();
+    }
     // The delegate dropdown / withdraw modals need the active validator set for
     // the moniker. On the account/dashboard page that list may not be fetched
     // yet; pull it lazily so the UI fills in reactively.
@@ -310,6 +319,43 @@ async function onSubmit() {
               voter: from,
               proposalId: proposalId.value,
               option: Number(voteOption.value),
+            },
+          },
+        ],
+        memo: memo.value.trim() || undefined,
+        fee: qbtcDefaultFee(),
+      });
+      txHash.value = hash;
+      confirmedEvent({ hash });
+    } catch (e) {
+      errorMsg.value = describeQbtcError(e);
+    } finally {
+      submitting.value = false;
+    }
+    return;
+  }
+
+  if (mode.value === 'deposit') {
+    if (!proposalId.value) {
+      errorMsg.value = 'Proposal id is empty.';
+      return;
+    }
+    const baseUnits = decimalToBase(amountInput.value.trim());
+    if (!baseUnits) {
+      errorMsg.value = `Amount must be a positive QBTC value (up to ${QBTC_DECIMALS} decimal places).`;
+      return;
+    }
+    submitting.value = true;
+    try {
+      const hash: string = await signAndBroadcastQbtc({
+        from,
+        messages: [
+          {
+            typeUrl: '/cosmos.gov.v1.MsgDeposit',
+            value: {
+              proposalId: proposalId.value,
+              depositor: from,
+              amount: [{ denom: bondDenom.value, amount: baseUnits }],
             },
           },
         ],
@@ -553,6 +599,54 @@ function viewTx() {
                     <span class="label-text">Abstain</span>
                   </label>
                 </div>
+              </div>
+            </template>
+
+            <template v-else-if="m.id === 'deposit'">
+              <div class="form-control">
+                <label class="label"
+                  ><span class="label-text">Proposal</span></label
+                >
+                <input
+                  type="text"
+                  class="input input-bordered bg-base-200 w-full"
+                  :value="proposalId ? `#${proposalId}` : ''"
+                  readonly
+                />
+              </div>
+
+              <div class="form-control">
+                <label class="label"
+                  ><span class="label-text">Balances</span></label
+                >
+                <input
+                  type="text"
+                  class="input input-bordered bg-base-200 w-full"
+                  :value="balanceLabel"
+                  readonly
+                />
+              </div>
+
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">Amount</span>
+                </label>
+                <label
+                  class="input input-bordered bg-base-200 w-full flex items-center gap-2"
+                >
+                  <input
+                    v-model="amountInput"
+                    type="text"
+                    inputmode="decimal"
+                    placeholder="0.0"
+                    class="grow bg-transparent outline-none border-0 p-0"
+                    :disabled="submitting"
+                  />
+                  <span
+                    class="badge badge-ghost bg-base-300 border-0 uppercase"
+                    >qbtc</span
+                  >
+                </label>
               </div>
             </template>
 
