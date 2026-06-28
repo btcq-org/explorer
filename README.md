@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/vultisig/vultisig-windows/refs/heads/main/core/ui/public/coins/qbtc.svg" alt="qBTC" width="120" />
+<img src="public/logos/qbtc.svg" alt="qBTC" width="120" />
 
 <h1>qBTC Explorer</h1>
 
