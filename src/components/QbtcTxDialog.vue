@@ -33,6 +33,7 @@ type ModalMode =
   | 'transfer'
   | 'vote'
   | 'delegate'
+  | 'unbond'
   | 'withdraw'
   | 'withdraw_commission';
 
@@ -42,7 +43,7 @@ const dialogStore = useTxDialog();
 const stakingStore = useStakingStore();
 
 // Send/Transfer go through `window.vultisig.qbtc`'s `send_transaction` (bank
-// only). Vote, Delegate and Withdraw are wired to the same upstream
+// only). Vote, Delegate, Unbond and Withdraw are wired to the same upstream
 // `dialog.open(…)` entry points and submit via the provider's generic
 // `sign_and_broadcast`.
 const modes: ReadonlyArray<{ id: ModalMode; title: string; submitting: string }> = [
@@ -50,6 +51,7 @@ const modes: ReadonlyArray<{ id: ModalMode; title: string; submitting: string }>
   { id: 'transfer', title: 'Transfer', submitting: 'Transferring…' },
   { id: 'vote', title: 'Vote', submitting: 'Voting…' },
   { id: 'delegate', title: 'Delegate', submitting: 'Delegating…' },
+  { id: 'unbond', title: 'Undelegate', submitting: 'Undelegating…' },
   { id: 'withdraw', title: 'Withdraw Reward', submitting: 'Withdrawing…' },
   {
     id: 'withdraw_commission',
@@ -123,6 +125,23 @@ const selectedValidatorMoniker = computed(() => {
   );
   return match?.moniker || selectedValidator.value;
 });
+
+// Unbond (undelegate). Always opened from a delegation row with a fixed
+// `validator_address`; the amount is capped at the wallet's current delegation
+// balance to that validator. `balance.amount` is integer base units.
+const unbondDelegation = computed(() =>
+  walletStore.delegations.find(
+    (d) => d.delegation.validator_address === validatorFromParams.value
+  )
+);
+
+const unbondMaxBase = computed(() => unbondDelegation.value?.balance.amount ?? '0');
+
+const unbondMaxLabel = computed(() => `${baseToDecimal(unbondMaxBase.value)} QBTC`);
+
+function setMaxUnbond() {
+  amountInput.value = baseToDecimal(unbondMaxBase.value);
+}
 
 // Withdraw rewards. A specific validator rides in on `params.validator_address`
 // (dashboard / account rows); opened with empty params (account header) it
@@ -250,16 +269,18 @@ function onToggleChange(e: Event) {
     t.id === 'transfer' ||
     t.id === 'vote' ||
     t.id === 'delegate' ||
+    t.id === 'unbond' ||
     t.id === 'withdraw' ||
     t.id === 'withdraw_commission'
   ) {
     mode.value = t.id;
     resetForm();
-    // The delegate dropdown / withdraw modals need the active validator set for
-    // the moniker. On the account/dashboard page that list may not be fetched
-    // yet; pull it lazily so the UI fills in reactively.
+    // The delegate dropdown / unbond / withdraw modals need the active validator
+    // set for the moniker. On the account/dashboard page that list may not be
+    // fetched yet; pull it lazily so the UI fills in reactively.
     if (
       (t.id === 'delegate' ||
+        t.id === 'unbond' ||
         t.id === 'withdraw' ||
         t.id === 'withdraw_commission') &&
       stakingStore.validators.length === 0
@@ -344,6 +365,48 @@ async function onSubmit() {
         messages: [
           {
             typeUrl: '/cosmos.staking.v1beta1.MsgDelegate',
+            value: {
+              delegatorAddress: from,
+              validatorAddress: validator,
+              amount: { denom: bondDenom.value, amount: baseUnits },
+            },
+          },
+        ],
+        memo: memo.value.trim() || undefined,
+        fee: qbtcDefaultFee(),
+      });
+      txHash.value = hash;
+      confirmedEvent({ hash });
+    } catch (e) {
+      errorMsg.value = describeQbtcError(e);
+    } finally {
+      submitting.value = false;
+    }
+    return;
+  }
+
+  if (mode.value === 'unbond') {
+    const validator = validatorFromParams.value;
+    if (!validator) {
+      errorMsg.value = 'Validator address is empty.';
+      return;
+    }
+    const baseUnits = decimalToBase(amountInput.value.trim());
+    if (!baseUnits) {
+      errorMsg.value = `Amount must be a positive QBTC value (up to ${QBTC_DECIMALS} decimal places).`;
+      return;
+    }
+    if (BigInt(baseUnits) > BigInt(unbondMaxBase.value)) {
+      errorMsg.value = `Amount exceeds your delegated balance (${unbondMaxLabel.value}).`;
+      return;
+    }
+    submitting.value = true;
+    try {
+      const hash: string = await signAndBroadcastQbtc({
+        from,
+        messages: [
+          {
+            typeUrl: '/cosmos.staking.v1beta1.MsgUndelegate',
             value: {
               delegatorAddress: from,
               validatorAddress: validator,
@@ -618,6 +681,62 @@ function viewTx() {
                   :value="commissionLabel"
                   readonly
                 />
+              </div>
+            </template>
+
+            <template v-else-if="m.id === 'unbond'">
+              <div class="form-control">
+                <label class="label"
+                  ><span class="label-text">Validator</span></label
+                >
+                <input
+                  type="text"
+                  class="input input-bordered bg-base-200 w-full"
+                  :value="selectedValidatorMoniker"
+                  readonly
+                />
+              </div>
+
+              <div class="form-control">
+                <label class="label"
+                  ><span class="label-text">Delegated</span></label
+                >
+                <input
+                  type="text"
+                  class="input input-bordered bg-base-200 w-full"
+                  :value="unbondMaxLabel"
+                  readonly
+                />
+              </div>
+
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">Amount</span>
+                </label>
+                <label
+                  class="input input-bordered bg-base-200 w-full flex items-center gap-2"
+                >
+                  <input
+                    v-model="amountInput"
+                    type="text"
+                    inputmode="decimal"
+                    placeholder="0.0"
+                    class="grow bg-transparent outline-none border-0 p-0"
+                    :disabled="submitting"
+                  />
+                  <button
+                    type="button"
+                    class="btn btn-xs btn-ghost"
+                    :disabled="submitting"
+                    @click="setMaxUnbond"
+                  >
+                    Max
+                  </button>
+                  <span
+                    class="badge badge-ghost bg-base-300 border-0 uppercase"
+                    >qbtc</span
+                  >
+                </label>
               </div>
             </template>
 
