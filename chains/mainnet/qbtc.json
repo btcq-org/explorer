@@ -1,7 +1,7 @@
 {
   "chain_name": "qbtc",
   "registry_name": "qbtc",
-  "logo": "https://raw.githubusercontent.com/vultisig/vultisig-windows/8fa4e87f94ec75cd54b38b70c667c501c57d709f/core/ui/public/coins/qbtc.svg",
+  "logo": "https://raw.githubusercontent.com/btcq-org/explorer/master/public/logos/qbtc.svg",
   "api": [
     "https://api.vultisig.com/qbtc-rpc"
   ],
@@ -18,7 +18,7 @@
       "symbol": "QBTC",
       "exponent": "8",
       "coingecko_id": "",
-      "logo": "https://raw.githubusercontent.com/vultisig/vultisig-windows/8fa4e87f94ec75cd54b38b70c667c501c57d709f/core/ui/public/coins/qbtc.svg"
+      "logo": "https://raw.githubusercontent.com/btcq-org/explorer/master/public/logos/qbtc.svg"
     }
   ]
 }
